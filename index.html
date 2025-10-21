@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>図形プロトタイプ（Babylon.js）</title>
+  <title>図形プロトタイプ（Babylon.js） - チェーン展開対応</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root{--ui-w:360px}
@@ -64,7 +64,7 @@
   <script>
   (function(){
 
-    // -- シーン初期化 --
+    // -- 初期化 --
     const canvas = document.getElementById('renderCanvas');
     const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
     const scene = new BABYLON.Scene(engine);
@@ -90,6 +90,9 @@
     let currentShape = 'cube';
     let currentMeta = null; // { origFaces, targets }
 
+    // pivots created during unfolding (kept to allow cleanup)
+    let activePivots = [];
+
     const shapeSelect = document.getElementById('shape-select');
     const faceSelect = document.getElementById('face-select');
     const colorPicker = document.getElementById('color-picker');
@@ -99,12 +102,15 @@
     const toggleUnfoldBtn = document.getElementById('toggle-unfold');
     const resetBtn = document.getElementById('reset');
 
-    // utility lerp
+    // helpers
     function lerp(a,b,t){ return a + (b-a)*t; }
     function lerpVec3(a,b,t){ return new BABYLON.Vector3(lerp(a.x,b.x,t), lerp(a.y,b.y,t), lerp(a.z,b.z,t)); }
 
     // dispose helper
     function clearRoot(){
+      activePivots.forEach(p => { try{ p.dispose(); }catch(e){} });
+      activePivots = [];
+
       for (const k in faceMeshes){
         try{ faceMeshes[k].dispose(true); }catch(e){}
       }
@@ -123,7 +129,7 @@
       return plane;
     }
 
-    // --- build Cube ---
+    // --- 形状構築（cube / triPrism / squarePyramid） ---
     function buildCube(){
       clearRoot();
       faceMeshes = {};
@@ -152,33 +158,11 @@
         faceMeshes[f.name] = m;
       });
 
-      // edges (visual aid) - create box wireframe
-      const box = BABYLON.MeshBuilder.CreateBox('boxEdges', {size: size*1.001}, scene);
-      box.parent = root;
-      const edMat = new BABYLON.StandardMaterial('edmat', scene);
-      edMat.diffuseColor = new BABYLON.Color3(0.13,0.13,0.13);
-      edMat.disableLighting = true;
-      box.material = edMat;
-      box.renderOutline = true;
-      box.outlineColor = new BABYLON.Color3(0.13,0.13,0.13);
-      box.outlineWidth = 0;
-      box.isVisible = false; // hide solid, used only for EdgesRenderer would be better, but keep simple
-
-      // targets (net)
-      const targets = {
-        front: {pos:new BABYLON.Vector3(0,0,half), rot:new BABYLON.Vector3(0,0,0)},
-        right: {pos:new BABYLON.Vector3(size + size/2,0,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)},
-        left:  {pos:new BABYLON.Vector3(-size - size/2,0,0), rot:new BABYLON.Vector3(Math.PI/2,0,0)},
-        top:   {pos:new BABYLON.Vector3(0, size + size/2,0), rot:new BABYLON.Vector3(0,0,0)},
-        bottom:{pos:new BABYLON.Vector3(0,-size - size/2,0), rot:new BABYLON.Vector3(Math.PI,0,0)},
-        back:  {pos:new BABYLON.Vector3(size*2 + size/2,0,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)}
-      };
-
       const origFaces = faces.map(f=>({name:f.name,pos:f.pos.clone(),rot:f.rot.clone()}));
+      const targets = {}; // kept for compatibility
       return {origFaces, targets};
     }
 
-    // --- build Triangular Prism ---
     function buildTriPrism(){
       clearRoot();
       faceMeshes = {};
@@ -191,9 +175,7 @@
 
       defaultColors = { capFront:'#ffeeee', capBack:'#eeffee', side0:'#ffdd88', side1:'#88ddff', side2:'#88ff88' };
 
-      // caps
       function createTriFace(name, z){
-        // create a triangle mesh (Buffer)
         const positions = [
           v0.x, v0.y, z,
           v1.x, v1.y, z,
@@ -217,7 +199,6 @@
       createTriFace('capFront', depth/2);
       createTriFace('capBack', -depth/2);
 
-      // side rectangles (as planes)
       const sides = [
         {name:'side0', a:v0, b:v1},
         {name:'side1', a:v1, b:v2},
@@ -228,7 +209,6 @@
         const edgeCenter = a.add(b).scale(0.5);
         const edgeLen = BABYLON.Vector3.Distance(a,b);
         const pl = createFacePlane(sdat.name, edgeLen, depth);
-        // plane default in XY facing +Z; rotate so its 'height' maps to Z thickness
         const angle = Math.atan2(b.y - a.y, b.x - a.x);
         pl.position = new BABYLON.Vector3(edgeCenter.x, edgeCenter.y, 0);
         pl.rotation.x = Math.PI/2;
@@ -239,25 +219,14 @@
         faceMeshes[sdat.name] = pl;
       });
 
-      // prepare orig faces list & targets (approx)
       const faces = Object.keys(faceMeshes).map(name=>{
         const m = faceMeshes[name];
         return {name, pos:m.position.clone(), rot:m.rotation.clone()};
       });
 
-      const offset = 1.4;
-      const targets = {
-        capFront: {pos:new BABYLON.Vector3(0, triH + offset, 0), rot:new BABYLON.Vector3(0,0,0)},
-        capBack:  {pos:new BABYLON.Vector3(0, -triH - offset, 0), rot:new BABYLON.Vector3(0,0,Math.PI)},
-        side0:    {pos:new BABYLON.Vector3(-1.2,0,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)},
-        side1:    {pos:new BABYLON.Vector3(0,0,-1.6), rot:new BABYLON.Vector3(-Math.PI/2,0,0)},
-        side2:    {pos:new BABYLON.Vector3(1.2,0,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)}
-      };
-
-      return {origFaces:faces, targets};
+      return {origFaces:faces, targets:{}};
     }
 
-    // --- build Square Pyramid ---
     function buildSquarePyramid(){
       clearRoot();
       faceMeshes = {};
@@ -267,7 +236,6 @@
 
       defaultColors = { base:'#ffeedd', side0:'#ffd', side1:'#ddf', side2:'#dfd', side3:'#ffddee' };
 
-      // base (plane on XZ)
       const basePlane = createFacePlane('base', base, base);
       basePlane.rotation.x = -Math.PI/2;
       basePlane.position = new BABYLON.Vector3(0,0,0);
@@ -308,19 +276,10 @@
         return {name, pos:m.position.clone(), rot:m.rotation.clone()};
       });
 
-      const gap = 1.05;
-      const targets = {
-        base: {pos:new BABYLON.Vector3(0,0,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)},
-        side0: {pos:new BABYLON.Vector3(-base - gap, 0, 0), rot:new BABYLON.Vector3(0,0, -Math.PI/2)},
-        side1: {pos:new BABYLON.Vector3(0, 0, -base - gap), rot:new BABYLON.Vector3(0,0, 0)},
-        side2: {pos:new BABYLON.Vector3(base + gap, 0, 0), rot:new BABYLON.Vector3(0,0, Math.PI/2)},
-        side3: {pos:new BABYLON.Vector3(0, 0, base + gap), rot:new BABYLON.Vector3(0,0, Math.PI)}
-      };
-
-      return {origFaces:faces, targets};
+      return {origFaces:faces, targets:{}};
     }
 
-    // build dispatcher
+    // dispatcher
     function buildShape(name){
       currentShape = name;
       if(name === 'cube') currentMeta = buildCube();
@@ -331,7 +290,6 @@
       return currentMeta;
     }
 
-    // populate face select UI
     function populateFaceSelect(){
       faceSelect.innerHTML = '';
       Object.keys(faceMeshes).forEach(k=>{
@@ -342,9 +300,8 @@
       faceSelect.value = faceSelect.options.length ? faceSelect.options[0].value : '';
     }
 
-    // picking (pointer)
+    // picking
     canvas.addEventListener('pointerdown', function(evt){
-      // left click only
       if(evt.button !== 0) return;
       const pick = scene.pick(scene.pointerX, scene.pointerY);
       if(pick && pick.hit && pick.pickedMesh){
@@ -355,7 +312,7 @@
       }
     });
 
-    // apply color
+    // color apply
     function applyColorToSelected(){
       const name = faceSelect.value;
       if(!name) return;
@@ -381,74 +338,254 @@
       buildShape(currentShape);
       root.position = BABYLON.Vector3.Zero();
       root.scaling = new BABYLON.Vector3(1,1,1);
-      // restore default colors
       Object.keys(faceMeshes).forEach(name=>{
         if(defaultColors[name] && faceMeshes[name] && faceMeshes[name].material){
           faceMeshes[name].material.diffuseColor = BABYLON.Color3.FromHexString(defaultColors[name]);
         }
       });
+      // dispose pivots
+      activePivots.forEach(p=>{ try{ p.dispose(); }catch(e){} });
+      activePivots = [];
       unfolded = false;
     });
 
-    // store animation state
-    let animRunning = false;
-    function toggleUnfold(){
-      if(!currentMeta) return;
-      if(animRunning) return;
-      const targets = currentMeta.targets || {};
-      const startStates = {};
-      Object.keys(faceMeshes).forEach(name=>{
-        const m = faceMeshes[name];
-        startStates[name] = {
-          pos: m.position.clone(),
-          rot: m.rotation.clone()
-        };
-      });
+    // --- Pivot / hinge utilities ---
 
-      const duration = 600; // ms
-      const startTime = performance.now();
-      animRunning = true;
-
-      function tick(){
-        const now = performance.now();
-        const t = Math.min(1, (now - startTime) / duration);
-        const eased = t < 0.5 ? 2*t*t : -1 + (4-2*t)*t;
-
-        Object.keys(faceMeshes).forEach(name=>{
-          const m = faceMeshes[name];
-          const from = startStates[name];
-          let to;
-          if(!unfolded){
-            to = targets[name] || { pos: from.pos, rot: from.rot };
-          } else {
-            const orig = (currentMeta.origFaces || []).find(f => f.name === name);
-            to = orig ? { pos: orig.pos, rot: orig.rot } : { pos: from.pos, rot: from.rot };
-          }
-          // interpolate position
-          const p = lerpVec3(from.pos, to.pos, eased);
-          m.position.copyFrom(p);
-          // interpolate rotation (component-wise euler lerp)
-          m.rotation = new BABYLON.Vector3(
-            lerp(from.rot.x, to.rot.x, eased),
-            lerp(from.rot.y, to.rot.y, eased),
-            lerp(from.rot.z, to.rot.z, eased)
-          );
-        });
-
-        if(t < 1) requestAnimationFrame(tick);
-        else { unfolded = !unfolded; animRunning = false; }
+    function getWorldVertices(mesh){
+      const pos = mesh.getVerticesData ? mesh.getVerticesData(BABYLON.VertexBuffer.PositionKind) : null;
+      if(!pos) {
+        const bb = mesh.getBoundingInfo && mesh.getBoundingInfo();
+        if(bb){
+          const min = bb.minimum.add(mesh.getAbsolutePosition());
+          const max = bb.maximum.add(mesh.getAbsolutePosition());
+          return [min, max];
+        }
+        return [];
       }
-      requestAnimationFrame(tick);
+      const verts = [];
+      const wm = mesh.getWorldMatrix();
+      for(let i=0;i<pos.length;i+=3){
+        const v = new BABYLON.Vector3(pos[i],pos[i+1],pos[i+2]);
+        const w = BABYLON.Vector3.TransformCoordinates(v, wm);
+        verts.push(w);
+      }
+      return verts;
+    }
+
+    function findSharedEdge(meshA, meshB, eps = 1e-3){
+      const aVerts = getWorldVertices(meshA);
+      const bVerts = getWorldVertices(meshB);
+      const common = [];
+      for(const va of aVerts){
+        for(const vb of bVerts){
+          if(va.subtract(vb).lengthSquared() < eps*eps){
+            common.push(va.clone());
+          }
+        }
+      }
+      if(common.length < 2) return null;
+      const uniq = [];
+      for(const c of common){
+        if(uniq.every(u => u.subtract(c).length() > eps)) uniq.push(c);
+        if(uniq.length === 2) break;
+      }
+      if(uniq.length === 2) return {p1: uniq[0], p2: uniq[1]};
+      return null;
+    }
+
+    function getWorldNormal(mesh){
+      const localN = new BABYLON.Vector3(0,0,1);
+      const m = mesh.getWorldMatrix();
+      const worldN = BABYLON.Vector3.TransformNormal(localN, m);
+      worldN.normalize();
+      return worldN;
+    }
+
+    function signedAngleAroundAxis(a, b, axis){
+      const axisN = axis.clone().normalize();
+      const aP = a.subtract(axisN.scale(BABYLON.Vector3.Dot(axisN, a)));
+      const bP = b.subtract(axisN.scale(BABYLON.Vector3.Dot(axisN, b)));
+      if(aP.length() === 0 || bP.length() === 0) return 0;
+      aP.normalize(); bP.normalize();
+      const dot = BABYLON.Scalar.Clamp(BABYLON.Vector3.Dot(aP,bP), -1, 1);
+      const cross = BABYLON.Vector3.Cross(aP, bP);
+      const sign = Math.sign(BABYLON.Vector3.Dot(axisN, cross)) || 1;
+      const angle = Math.acos(dot) * sign;
+      return angle;
+    }
+
+    // hinge rotate returns a Promise resolved when animation completes
+    function hingeRotateMeshAroundEdge(mesh, hingeP1, hingeP2, angleRad, durationMs = 600){
+      return new Promise((resolve) => {
+        // store world transform
+        const origWorldPos = mesh.getAbsolutePosition().clone();
+        const origWorldQuat = mesh.rotationQuaternion ? mesh.rotationQuaternion.clone() : BABYLON.Quaternion.FromEulerVector(mesh.rotation);
+
+        // pivot at hinge midpoint
+        const hingeMid = hingeP1.add(hingeP2).scale(0.5);
+        const pivot = new BABYLON.TransformNode(mesh.name + "_hinge_pivot", scene);
+        pivot.position.copyFrom(hingeMid);
+        pivot.rotationQuaternion = BABYLON.Quaternion.Identity();
+
+        // compute local pos for mesh relative to pivot
+        const inv = pivot.getWorldMatrix().clone();
+        inv.invert();
+        const localPos = BABYLON.Vector3.TransformCoordinates(origWorldPos, inv);
+
+        // parent mesh to pivot and set local pos/rot to preserve world transform
+        mesh.setParent(pivot);
+        mesh.position.copyFrom(localPos);
+        mesh.rotationQuaternion = origWorldQuat;
+
+        // axis and target quaternion
+        const axis = hingeP2.subtract(hingeP1).normalize();
+        const targetQuat = BABYLON.Quaternion.RotationAxis(axis, angleRad).multiply(pivot.rotationQuaternion || BABYLON.Quaternion.Identity());
+
+        const frameRate = 60;
+        const totalFrames = Math.max(1, Math.floor((durationMs / 1000) * frameRate));
+        const anim = new BABYLON.Animation("anim_hinge_" + mesh.name, "rotationQuaternion", frameRate,
+          BABYLON.Animation.ANIMATIONTYPE_QUATERNION, BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+
+        const keys = [
+          { frame: 0, value: pivot.rotationQuaternion.clone() },
+          { frame: totalFrames, value: targetQuat }
+        ];
+        anim.setKeys(keys);
+        pivot.animations = pivot.animations || [];
+        pivot.animations.push(anim);
+
+        activePivots.push(pivot);
+
+        // begin animation and resolve at end
+        scene.beginAnimation(pivot, 0, totalFrames, false, 1, () => {
+          resolve(pivot);
+        });
+      });
+    }
+
+    // --- Build adjacency graph and spanning tree, then unfold along tree sequentially ---
+    function buildAdjacency(){
+      const names = Object.keys(faceMeshes);
+      const adj = {};
+      for(const a of names) {
+        adj[a] = new Set();
+      }
+      for(let i=0;i<names.length;i++){
+        for(let j=i+1;j<names.length;j++){
+          const A = faceMeshes[names[i]];
+          const B = faceMeshes[names[j]];
+          const edge = findSharedEdge(A,B,1e-3);
+          if(edge){
+            adj[names[i]].add(names[j]);
+            adj[names[j]].add(names[i]);
+          }
+        }
+      }
+      // convert sets to arrays
+      for(const k in adj) adj[k] = Array.from(adj[k]);
+      return adj;
+    }
+
+    function buildSpanningTree(adj, rootName){
+      const parent = {};
+      const order = [];
+      const q = [rootName];
+      parent[rootName] = null;
+      while(q.length){
+        const u = q.shift();
+        order.push(u);
+        const neighbors = adj[u] || [];
+        for(const v of neighbors){
+          if(!(v in parent)){
+            parent[v] = u;
+            q.push(v);
+          }
+        }
+      }
+      return {parent, order};
+    }
+
+    // unfold tree: performs hinge rotations from parent -> child sequentially
+    async function unfoldSpanningTree(rootName){
+      const adj = buildAdjacency();
+      const {parent, order} = buildSpanningTree(adj, rootName);
+      // process nodes in order (skip root)
+      for(const name of order){
+        if(name === rootName) continue;
+        const pName = parent[name];
+        if(!pName) continue;
+        const childMesh = faceMeshes[name];
+        const parentMesh = faceMeshes[pName];
+        if(!childMesh || !parentMesh) continue;
+        const edge = findSharedEdge(childMesh, parentMesh, 1e-3);
+        if(!edge){
+          console.warn('no shared edge found for', name, 'and', pName);
+          continue;
+        }
+        // compute axis and normals (world)
+        const axis = edge.p2.subtract(edge.p1).normalize();
+        const childNormal = getWorldNormal(childMesh);
+        const parentNormal = getWorldNormal(parentMesh);
+
+        // compute signed angle to rotate childNormal onto parentNormal around axis
+        let angle = signedAngleAroundAxis(childNormal, parentNormal, axis);
+
+        // If angle is near 0, pick +/-90 deg as a reasonable unfold outward
+        const eps = 0.02;
+        if(Math.abs(angle) < eps){
+          // determine outward direction: vector from hinge to child center
+          const childCenter = childMesh.getBoundingInfo().boundingBox.centerWorld;
+          const hingeMid = edge.p1.add(edge.p2).scale(0.5);
+          const toChild = childCenter.subtract(hingeMid);
+          const cross = BABYLON.Vector3.Cross(axis, toChild);
+          angle = (BABYLON.Vector3.Dot(cross, parentNormal) >= 0) ? Math.PI/2 : -Math.PI/2;
+        }
+
+        // Perform hinge rotation and await completion before continuing (chained)
+        try{
+          await hingeRotateMeshAroundEdge(childMesh, edge.p1, edge.p2, angle, 700);
+        }catch(e){
+          console.error('hinge animation failed for', name, e);
+        }
+      }
+    }
+
+    // pivot-based master unfold: builds spanning tree from center face and unfolds chain
+    async function pivotUnfoldChain(){
+      if(!currentMeta) return;
+      const centerName = ('front' in faceMeshes) ? 'front' : Object.keys(faceMeshes)[0];
+      // clear any previous pivots
+      activePivots.forEach(p => { try{ p.dispose(); }catch(e){} });
+      activePivots = [];
+      // run unfold chain
+      await unfoldSpanningTree(centerName);
+    }
+
+    // toggleUnfold uses chain unfold; fold-back rebuilds original shape
+    let animFlag = false;
+    async function toggleUnfold(){
+      if(animFlag) return;
+      animFlag = true;
+      if(!unfolded){
+        await pivotUnfoldChain();
+        unfolded = true;
+        animFlag = false;
+      } else {
+        // fold back: rebuild shape to restore exact original state (simple and robust)
+        activePivots.forEach(p => { try{ p.dispose(); }catch(e){} });
+        activePivots = [];
+        buildShape(currentShape);
+        unfolded = false;
+        animFlag = false;
+      }
     }
 
     toggleUnfoldBtn.addEventListener('click', toggleUnfold);
 
-    // shape select handler
-    shapeSelect.addEventListener('change', (e)=>{
-      buildShape(e.target.value);
-    });
+    // UI handlers
+    shapeSelect.addEventListener('change', (e)=> buildShape(e.target.value) );
 
-    // initial build
+    // initial
     buildShape('cube');
 
     // render loop
@@ -458,11 +595,10 @@
 
     window.addEventListener('resize', ()=> engine.resize());
 
-    // provide a small debug tool: when new shapes are built, show available faces in console
+    // debug
     function logFaces(){
       console.log('faces:', Object.keys(faceMeshes));
     }
-    // expose for debugging
     window.__proto__._faceMeshes = faceMeshes;
     logFaces();
 
