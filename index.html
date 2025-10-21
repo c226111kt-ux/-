@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>図形プロトタイプ：立方体・三角柱・四角錐（展開アニメ）</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     body { margin: 0; font-family: sans-serif; display:flex; height:100vh; }
     #canvas-container { flex:1; background:#222; }
@@ -51,413 +52,415 @@
     <p class="help">操作: マウスで回転・ズーム・パン（左ドラッグ=回転、ホイール=ズーム、右ドラッグ=パン）。面をクリックして選択、または上のドロップダウンで選び色を変えます。</p>
   </div>
 
-  <!-- three.js -->
-  <script src="https://unpkg.com/three@0.155.0/build/three.min.js"></script>
-  <script src="https://unpkg.com/three@0.155.0/examples/js/controls/OrbitControls.js"></script>
+  <!-- モジュール版 three と OrbitControls を使用 -->
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.155.0/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.155.0/examples/jsm/controls/OrbitControls.js';
 
-  <script>
-  (function(){
-    const container = document.getElementById('canvas-container');
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x222222);
-    const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 100);
-    camera.position.set(3, 2, 3);
+    (function(){
+      const container = document.getElementById('canvas-container');
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x222222);
+      const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 100);
+      camera.position.set(3, 2, 3);
 
-    const renderer = new THREE.WebGLRenderer({ antialias:true });
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    container.appendChild(renderer.domElement);
+      const renderer = new THREE.WebGLRenderer({ antialias:true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      // 即席対応: three.js r150+ の警告を抑えるために暫定的にレガシー照明モードを有効化
+      // 長期的には three.js のライト API 移行ガイドに合わせてコードを更新してください。
+      renderer.useLegacyLights = true;
+      container.appendChild(renderer.domElement);
 
-    const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
 
-    // 照明
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.95);
-    hemi.position.set(0, 4, 0);
-    scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
-    dir.position.set(5, 10, 7.5);
-    scene.add(dir);
+      // 照明
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.95);
+      hemi.position.set(0, 4, 0);
+      scene.add(hemi);
+      const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+      dir.position.set(5, 10, 7.5);
+      scene.add(dir);
 
-    let shapeGroup = new THREE.Group();
-    scene.add(shapeGroup);
+      let shapeGroup = new THREE.Group();
+      scene.add(shapeGroup);
 
-    const ray = new THREE.Raycaster();
-    const pointer = new THREE.Vector2();
-    let selectedFace = null;
-    const faceSelectElem = document.getElementById('face-select');
+      const ray = new THREE.Raycaster();
+      const pointer = new THREE.Vector2();
+      let selectedFace = null;
+      const faceSelectElem = document.getElementById('face-select');
 
-    // 状態
-    let faceMeshes = {}; // name -> mesh
-    let defaultColors = {};
-    let unfolded = false;
-    let currentShape = 'cube';
+      // 状態
+      let faceMeshes = {}; // name -> mesh
+      let defaultColors = {};
+      let unfolded = false;
+      let currentShape = 'cube';
 
-    // UI elements
-    const shapeSelect = document.getElementById('shape-select');
-    const colorPicker = document.getElementById('color-picker');
+      // UI elements
+      const shapeSelect = document.getElementById('shape-select');
+      const colorPicker = document.getElementById('color-picker');
 
-    // Utility: clear group
-    function clearGroup(g){
-      while(g.children.length) {
-        const c = g.children[0];
-        c.geometry?.dispose();
-        c.material?.dispose && c.material.dispose();
-        g.remove(c);
-      }
-    }
-
-    // Build Cube (using 6 planes as before)
-    function buildCube(){
-      clearGroup(shapeGroup);
-      faceMeshes = {};
-      defaultColors = {
-        front:'#ffffff', back:'#eeeeee', left:'#ddddff', right:'#ddffdd', top:'#ffffcc', bottom:'#ffdddd'
-      };
-      const size = 1;
-      const half = size/2;
-      const faces = [
-        {name:'front', pos:[0,0,half], rot:[0,0,0]},
-        {name:'back',  pos:[0,0,-half], rot:[0,Math.PI,0]},
-        {name:'left',  pos:[-half,0,0], rot:[0,-Math.PI/2,0]},
-        {name:'right', pos:[half,0,0], rot:[0,Math.PI/2,0]},
-        {name:'top',   pos:[0,half,0], rot:[-Math.PI/2,0,0]},
-        {name:'bottom',pos:[0,-half,0], rot:[Math.PI/2,0,0]}
-      ];
-      faces.forEach(f=>{
-        const geom = new THREE.PlaneGeometry(size, size);
-        const mat = new THREE.MeshStandardMaterial({ color: defaultColors[f.name], side:THREE.DoubleSide });
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.name = f.name;
-        mesh.position.set(...f.pos);
-        mesh.rotation.set(...f.rot);
-        shapeGroup.add(mesh);
-        faceMeshes[f.name] = mesh;
-      });
-      const edges = new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(size, size, size)),
-        new THREE.LineBasicMaterial({color:0x222222})
-      );
-      shapeGroup.add(edges);
-
-      // unfold targets (simple cross/net)
-      const targets = {
-        front: {pos:[0,0,half], rot:[0,0,0]},
-        right: {pos:[size + size/2,0,0], rot:[-Math.PI/2,0,0]},
-        left:  {pos:[-size - size/2,0,0], rot:[Math.PI/2,0,0]},
-        top:   {pos:[0, size + size/2,0], rot:[0,0,0]},
-        bottom:{pos:[0,-size - size/2,0], rot:[Math.PI,0,0]},
-        back:  {pos:[size*2 + size/2,0,0], rot:[-Math.PI/2,0,0]}
-      };
-      return {origFaces:faces, targets};
-    }
-
-    // Build Triangular Prism (equilateral triangle cross-section, depth along Z)
-    function buildTriPrism(){
-      clearGroup(shapeGroup);
-      faceMeshes = {};
-      const s = 1; // triangle side
-      const depth = 1;
-      const triH = Math.sqrt(3)/2 * s;
-      // triangle vertices in XY
-      const v0 = new THREE.Vector3(-s/2, -triH/3, 0);
-      const v1 = new THREE.Vector3(s/2, -triH/3, 0);
-      const v2 = new THREE.Vector3(0, triH*2/3, 0);
-
-      defaultColors = {
-        capFront:'#ffeeee', capBack:'#eeffee',
-        side0:'#ffd', side1:'#ddf', side2:'#dfd'
-      };
-
-      // caps: two triangular faces at z = +depth/2 (front) and -depth/2 (back)
-      function createTriangleFace(name, z, normalSign){
-        const geom = new THREE.BufferGeometry();
-        const positions = new Float32Array([
-          v0.x, v0.y, z,
-          v1.x, v1.y, z,
-          v2.x, v2.y, z
-        ]);
-        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geom.computeVertexNormals();
-        const mat = new THREE.MeshStandardMaterial({ color: defaultColors[name], side:THREE.DoubleSide });
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.name = name;
-        shapeGroup.add(mesh);
-        faceMeshes[name] = mesh;
-        return mesh;
+      // Utility: clear group
+      function clearGroup(g){
+        while(g.children.length) {
+          const c = g.children[0];
+          if (c.geometry) c.geometry.dispose();
+          if (c.material && c.material.dispose) c.material.dispose();
+          g.remove(c);
+        }
       }
 
-      createTriangleFace('capFront', depth/2, 1);
-      createTriangleFace('capBack', -depth/2, -1);
+      // Build Cube (using 6 planes)
+      function buildCube(){
+        clearGroup(shapeGroup);
+        faceMeshes = {};
+        defaultColors = {
+          front:'#ffffff', back:'#eeeeee', left:'#ddddff', right:'#ddffdd', top:'#ffffcc', bottom:'#ffdddd'
+        };
+        const size = 1;
+        const half = size/2;
+        const faces = [
+          {name:'front', pos:[0,0,half], rot:[0,0,0]},
+          {name:'back',  pos:[0,0,-half], rot:[0,Math.PI,0]},
+          {name:'left',  pos:[-half,0,0], rot:[0,-Math.PI/2,0]},
+          {name:'right', pos:[half,0,0], rot:[0,Math.PI/2,0]},
+          {name:'top',   pos:[0,half,0], rot:[-Math.PI/2,0,0]},
+          {name:'bottom',pos:[0,-half,0], rot:[Math.PI/2,0,0]}
+        ];
+        faces.forEach(f=>{
+          const geom = new THREE.PlaneGeometry(size, size);
+          const mat = new THREE.MeshStandardMaterial({ color: defaultColors[f.name], side:THREE.DoubleSide });
+          const mesh = new THREE.Mesh(geom, mat);
+          mesh.name = f.name;
+          mesh.position.set(...f.pos);
+          mesh.rotation.set(...f.rot);
+          shapeGroup.add(mesh);
+          faceMeshes[f.name] = mesh;
+        });
+        const edges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(new THREE.BoxGeometry(size, size, size)),
+          new THREE.LineBasicMaterial({color:0x222222})
+        );
+        shapeGroup.add(edges);
 
-      // sides: 3 rectangular faces connecting corresponding edges, build as PlaneGeometry and position + rotate
-      const sideGeoms = [
-        {name:'side0', a:v0, b:v1}, // bottom edge
-        {name:'side1', a:v1, b:v2},
-        {name:'side2', a:v2, b:v0}
-      ];
-      sideGeoms.forEach((sdat,i)=>{
-        const a = sdat.a, b = sdat.b;
-        const edgeCenter = new THREE.Vector3().addVectors(a,b).multiplyScalar(0.5);
-        const edgeLen = a.distanceTo(b);
-        const geom = new THREE.PlaneGeometry(edgeLen, depth);
-        const mat = new THREE.MeshStandardMaterial({ color: defaultColors[sdat.name], side:THREE.DoubleSide });
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.name = sdat.name;
-        // compute angle in XY of edge
-        const angle = Math.atan2(b.y - a.y, b.x - a.x);
-        mesh.position.set(edgeCenter.x, edgeCenter.y, 0);
-        mesh.rotation.set(0, 0, angle);
-        // rotate so plane's height aligns with Z
-        mesh.rotation.x = Math.PI/2;
-        mesh.rotation.z = angle;
-        shapeGroup.add(mesh);
-        faceMeshes[sdat.name] = mesh;
-      });
-
-      const faces = Object.keys(faceMeshes).map(name=>{
-        const m = faceMeshes[name];
-        return {name, pos:[m.position.x, m.position.y, m.position.z], rot:[m.rotation.x, m.rotation.y, m.rotation.z]};
-      });
-
-      // targets: lay caps flat and spread sides outward roughly
-      const offset = 1.4;
-      const targets = {
-        capFront: {pos:[0, triH + offset, 0], rot:[0,0,0]},
-        capBack:  {pos:[0, -triH - offset, 0], rot:[0,0,Math.PI]},
-        side0:    {pos:[-1.2,0,0], rot:[-Math.PI/2,0,0]},
-        side1:    {pos:[0,0, -1.6], rot:[-Math.PI/2,0,0]},
-        side2:    {pos:[1.2,0,0], rot:[-Math.PI/2,0,0]}
-      };
-
-      return {origFaces:faces, targets};
-    }
-
-    // Build Square Pyramid (base square on XZ plane, apex at +Y)
-    function buildSquarePyramid(){
-      clearGroup(shapeGroup);
-      faceMeshes = {};
-      const base = 1;
-      const half = base/2;
-      const height = 1; // pyramid height
-
-      defaultColors = {
-        base:'#ffeedd',
-        side0:'#ffd', side1:'#ddf', side2:'#dfd', side3:'#ffddee'
-      };
-
-      // base (square) in XZ plane at y=0
-      const baseGeom = new THREE.PlaneGeometry(base, base);
-      baseGeom.rotateX(-Math.PI/2); // make it lie in XZ
-      const baseMat = new THREE.MeshStandardMaterial({ color: defaultColors.base, side:THREE.DoubleSide });
-      const baseMesh = new THREE.Mesh(baseGeom, baseMat);
-      baseMesh.name = 'base';
-      baseMesh.position.set(0, 0, 0);
-      shapeGroup.add(baseMesh);
-      faceMeshes['base'] = baseMesh;
-
-      // apex
-      const apex = new THREE.Vector3(0, height, 0);
-      // four triangular sides
-      const corners = [
-        new THREE.Vector3(-half, 0, -half), // 0: back-left
-        new THREE.Vector3( half, 0, -half), // 1: back-right
-        new THREE.Vector3( half, 0,  half), // 2: front-right
-        new THREE.Vector3(-half, 0,  half)  // 3: front-left
-      ];
-      for(let i=0;i<4;i++){
-        const a = corners[i];
-        const b = corners[(i+1)%4];
-        const geom = new THREE.BufferGeometry();
-        const positions = new Float32Array([
-          a.x, a.y, a.z,
-          b.x, b.y, b.z,
-          apex.x, apex.y, apex.z
-        ]);
-        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geom.computeVertexNormals();
-        const mat = new THREE.MeshStandardMaterial({ color: defaultColors['side'+i], side:THREE.DoubleSide });
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.name = 'side' + i;
-        shapeGroup.add(mesh);
-        faceMeshes[mesh.name] = mesh;
+        // unfold targets (simple cross/net)
+        const targets = {
+          front: {pos:[0,0,half], rot:[0,0,0]},
+          right: {pos:[size + size/2,0,0], rot:[-Math.PI/2,0,0]},
+          left:  {pos:[-size - size/2,0,0], rot:[Math.PI/2,0,0]},
+          top:   {pos:[0, size + size/2,0], rot:[0,0,0]},
+          bottom:{pos:[0,-size - size/2,0], rot:[Math.PI,0,0]},
+          back:  {pos:[size*2 + size/2,0,0], rot:[-Math.PI/2,0,0]}
+        };
+        return {origFaces:faces, targets};
       }
 
-      // faces list
-      const faces = Object.keys(faceMeshes).map(name=>{
-        const m = faceMeshes[name];
-        return {name, pos:[m.position.x, m.position.y, m.position.z], rot:[m.rotation.x, m.rotation.y, m.rotation.z]};
-      });
+      // Build Triangular Prism (equilateral triangle cross-section, depth along Z)
+      function buildTriPrism(){
+        clearGroup(shapeGroup);
+        faceMeshes = {};
+        const s = 1; // triangle side
+        const depth = 1;
+        const triH = Math.sqrt(3)/2 * s;
+        // triangle vertices in XY
+        const v0 = new THREE.Vector3(-s/2, -triH/3, 0);
+        const v1 = new THREE.Vector3(s/2, -triH/3, 0);
+        const v2 = new THREE.Vector3(0, triH*2/3, 0);
 
-      // targets: lay side triangles outward around base, base flat stays
-      const gap = 1.05;
-      const targets = {
-        base: {pos:[0,0,0], rot:[-Math.PI/2,0,0]},
-        side0: {pos:[-base + -gap, 0, 0], rot:[0,0, -Math.PI/2]},
-        side1: {pos:[0, 0, -base - gap], rot:[0,0, 0]},
-        side2: {pos:[base + gap, 0, 0], rot:[0,0, Math.PI/2]},
-        side3: {pos:[0, 0, base + gap], rot:[0,0, Math.PI]}
-      };
-      return {origFaces:faces, targets};
-    }
+        defaultColors = {
+          capFront:'#ffeeee', capBack:'#eeffee',
+          side0:'#ffdd88', side1:'#88ddff', side2:'#88ff88'
+        };
 
-    // dispatcher to build shapes and return helper data
-    function buildShape(name){
-      currentShape = name;
-      let meta = null;
-      if(name === 'cube') meta = buildCube();
-      else if(name === 'triPrism') meta = buildTriPrism();
-      else if(name === 'squarePyramid') meta = buildSquarePyramid();
-      // populate face-select dropdown from faceMeshes
-      populateFaceSelect();
-      unfolded = false;
-      return meta;
-    }
+        // caps: two triangular faces at z = +depth/2 (front) and -depth/2 (back)
+        function createTriangleFace(name, z){
+          const geom = new THREE.BufferGeometry();
+          const positions = new Float32Array([
+            v0.x, v0.y, z,
+            v1.x, v1.y, z,
+            v2.x, v2.y, z
+          ]);
+          geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+          geom.computeVertexNormals();
+          const mat = new THREE.MeshStandardMaterial({ color: defaultColors[name], side:THREE.DoubleSide });
+          const mesh = new THREE.Mesh(geom, mat);
+          mesh.name = name;
+          shapeGroup.add(mesh);
+          faceMeshes[name] = mesh;
+          return mesh;
+        }
 
-    function populateFaceSelect(){
-      faceSelectElem.innerHTML = '';
-      Object.keys(faceMeshes).forEach(k=>{
-        const opt = document.createElement('option');
-        opt.value = k;
-        opt.textContent = k;
-        faceSelectElem.appendChild(opt);
-      });
-      // ensure selection variable
-      selectedFace = faceSelectElem.options.length ? faceSelectElem.options[0].value : null;
-    }
+        createTriangleFace('capFront', depth/2);
+        createTriangleFace('capBack', -depth/2);
 
-    // Raycast for clicks
-    function onPointerDown(event){
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((event.clientX - rect.left)/rect.width)*2 - 1;
-      pointer.y = -((event.clientY - rect.top)/rect.height)*2 + 1;
-      ray.setFromCamera(pointer, camera);
-      const intersects = ray.intersectObjects(Object.values(faceMeshes));
-      if(intersects.length>0){
-        selectedFace = intersects[0].object.name;
-        faceSelectElem.value = selectedFace;
+        // sides: 3 rectangular faces connecting corresponding edges
+        const sideGeoms = [
+          {name:'side0', a:v0, b:v1}, // bottom edge
+          {name:'side1', a:v1, b:v2},
+          {name:'side2', a:v2, b:v0}
+        ];
+        sideGeoms.forEach((sdat,i)=>{
+          const a = sdat.a, b = sdat.b;
+          const edgeCenter = new THREE.Vector3().addVectors(a,b).multiplyScalar(0.5);
+          const edgeLen = a.distanceTo(b);
+          const geom = new THREE.PlaneGeometry(edgeLen, depth);
+          const mat = new THREE.MeshStandardMaterial({ color: defaultColors[sdat.name], side:THREE.DoubleSide });
+          const mesh = new THREE.Mesh(geom, mat);
+          mesh.name = sdat.name;
+          // compute angle in XY of edge
+          const angle = Math.atan2(b.y - a.y, b.x - a.x);
+          mesh.position.set(edgeCenter.x, edgeCenter.y, 0);
+          // rotate so plane's height aligns with Z
+          mesh.rotation.x = Math.PI/2;
+          mesh.rotation.z = angle;
+          shapeGroup.add(mesh);
+          faceMeshes[sdat.name] = mesh;
+        });
+
+        const faces = Object.keys(faceMeshes).map(name=>{
+          const m = faceMeshes[name];
+          return {name, pos:[m.position.x, m.position.y, m.position.z], rot:[m.rotation.x, m.rotation.y, m.rotation.z]};
+        });
+
+        // targets: lay caps flat and spread sides outward roughly
+        const offset = 1.4;
+        const targets = {
+          capFront: {pos:[0, triH + offset, 0], rot:[0,0,0]},
+          capBack:  {pos:[0, -triH - offset, 0], rot:[0,0,Math.PI]},
+          side0:    {pos:[-1.2,0,0], rot:[-Math.PI/2,0,0]},
+          side1:    {pos:[0,0, -1.6], rot:[-Math.PI/2,0,0]},
+          side2:    {pos:[1.2,0,0], rot:[-Math.PI/2,0,0]}
+        };
+
+        return {origFaces:faces, targets};
       }
-    }
-    renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
-    // Apply color
-    document.getElementById('apply-color').addEventListener('click', ()=>{
-      const color = colorPicker.value;
-      const name = faceSelectElem.value;
-      if(name && faceMeshes[name]){
-        faceMeshes[name].material.color.set(color);
+      // Build Square Pyramid (base square on XZ plane, apex at +Y)
+      function buildSquarePyramid(){
+        clearGroup(shapeGroup);
+        faceMeshes = {};
+        const base = 1;
+        const half = base/2;
+        const height = 1; // pyramid height
+
+        defaultColors = {
+          base:'#ffeedd',
+          side0:'#ffd', side1:'#ddf', side2:'#dfd', side3:'#ffddee'
+        };
+
+        // base (square) in XZ plane at y=0
+        const baseGeom = new THREE.PlaneGeometry(base, base);
+        baseGeom.rotateX(-Math.PI/2); // make it lie in XZ
+        const baseMat = new THREE.MeshStandardMaterial({ color: defaultColors.base, side:THREE.DoubleSide });
+        const baseMesh = new THREE.Mesh(baseGeom, baseMat);
+        baseMesh.name = 'base';
+        baseMesh.position.set(0, 0, 0);
+        shapeGroup.add(baseMesh);
+        faceMeshes['base'] = baseMesh;
+
+        // apex
+        const apex = new THREE.Vector3(0, height, 0);
+        // four triangular sides
+        const corners = [
+          new THREE.Vector3(-half, 0, -half), // 0: back-left
+          new THREE.Vector3( half, 0, -half), // 1: back-right
+          new THREE.Vector3( half, 0,  half), // 2: front-right
+          new THREE.Vector3(-half, 0,  half)  // 3: front-left
+        ];
+        for(let i=0;i<4;i++){
+          const a = corners[i];
+          const b = corners[(i+1)%4];
+          const geom = new THREE.BufferGeometry();
+          const positions = new Float32Array([
+            a.x, a.y, a.z,
+            b.x, b.y, b.z,
+            apex.x, apex.y, apex.z
+          ]);
+          geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+          geom.computeVertexNormals();
+          const mat = new THREE.MeshStandardMaterial({ color: defaultColors['side'+i], side:THREE.DoubleSide });
+          const mesh = new THREE.Mesh(geom, mat);
+          mesh.name = 'side' + i;
+          shapeGroup.add(mesh);
+          faceMeshes[mesh.name] = mesh;
+        }
+
+        // faces list
+        const faces = Object.keys(faceMeshes).map(name=>{
+          const m = faceMeshes[name];
+          return {name, pos:[m.position.x, m.position.y, m.position.z], rot:[m.rotation.x, m.rotation.y, m.rotation.z]};
+        });
+
+        // targets: lay side triangles outward around base, base flat stays
+        const gap = 1.05;
+        const targets = {
+          base: {pos:[0,0,0], rot:[-Math.PI/2,0,0]},
+          side0: {pos:[-base - gap, 0, 0], rot:[0,0, -Math.PI/2]},
+          side1: {pos:[0, 0, -base - gap], rot:[0,0, 0]},
+          side2: {pos:[base + gap, 0, 0], rot:[0,0, Math.PI/2]},
+          side3: {pos:[0, 0, base + gap], rot:[0,0, Math.PI]}
+        };
+        return {origFaces:faces, targets};
       }
-    });
 
-    // shape select handler
-    shapeSelect.addEventListener('change', (e)=>{
-      const shape = e.target.value;
-      // reset group transform
-      shapeGroup.position.set(0,0,0);
-      shapeGroup.scale.set(1,1,1);
-      buildShape(shape);
-    });
+      // dispatcher to build shapes and return helper data
+      function buildShape(name){
+        currentShape = name;
+        let meta = null;
+        if(name === 'cube') meta = buildCube();
+        else if(name === 'triPrism') meta = buildTriPrism();
+        else if(name === 'squarePyramid') meta = buildSquarePyramid();
+        // populate face-select dropdown from faceMeshes
+        populateFaceSelect();
+        unfolded = false;
+        return meta;
+      }
 
-    // scale input
-    document.getElementById('scale').addEventListener('input', (e)=>{
-      const s = parseFloat(e.target.value);
-      shapeGroup.scale.set(s,s,s);
-    });
+      function populateFaceSelect(){
+        faceSelectElem.innerHTML = '';
+        Object.keys(faceMeshes).forEach(k=>{
+          const opt = document.createElement('option');
+          opt.value = k;
+          opt.textContent = k;
+          faceSelectElem.appendChild(opt);
+        });
+        // ensure selection variable
+        selectedFace = faceSelectElem.options.length ? faceSelectElem.options[0].value : null;
+      }
 
-    // face select change
-    faceSelectElem.addEventListener('change', (e)=>{
-      selectedFace = e.target.value;
-    });
+      // Raycast for clicks
+      function onPointerDown(event){
+        const rect = renderer.domElement.getBoundingClientRect();
+        pointer.x = ((event.clientX - rect.left)/rect.width)*2 - 1;
+        pointer.y = -((event.clientY - rect.top)/rect.height)*2 + 1;
+        ray.setFromCamera(pointer, camera);
+        const intersects = ray.intersectObjects(Object.values(faceMeshes));
+        if(intersects.length>0){
+          selectedFace = intersects[0].object.name;
+          faceSelectElem.value = selectedFace;
+        }
+      }
+      renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
-    // unfold / fold
-    let currentMeta = buildShape('cube'); // initial
-    function toggleUnfold(){
-      if(!currentMeta) return;
-      const targets = currentMeta.targets || {};
-      const startTime = performance.now();
-      const duration = 800;
-      const startStates = {};
-      Object.keys(faceMeshes).forEach(name=>{
-        const m = faceMeshes[name];
-        startStates[name] = { pos: m.position.clone(), rot: new THREE.Euler().copy(m.rotation) };
+      // Apply color
+      document.getElementById('apply-color').addEventListener('click', ()=>{
+        const color = colorPicker.value;
+        const name = faceSelectElem.value;
+        if(name && faceMeshes[name]){
+          faceMeshes[name].material.color.set(color);
+        }
       });
-      const animate = ()=>{
-        const now = performance.now();
-        const tt = Math.min(1, (now - startTime)/duration);
-        const eased = tt<0.5 ? 2*tt*tt : -1 + (4-2*tt)*tt;
+
+      // shape select handler
+      shapeSelect.addEventListener('change', (e)=>{
+        const shape = e.target.value;
+        // reset group transform
+        shapeGroup.position.set(0,0,0);
+        shapeGroup.scale.set(1,1,1);
+        buildShape(shape);
+      });
+
+      // scale input
+      document.getElementById('scale').addEventListener('input', (e)=>{
+        const s = parseFloat(e.target.value);
+        shapeGroup.scale.set(s,s,s);
+      });
+
+      // face select change
+      faceSelectElem.addEventListener('change', (e)=>{
+        selectedFace = e.target.value;
+      });
+
+      // unfold / fold
+      let currentMeta = buildShape('cube'); // initial
+      function toggleUnfold(){
+        if(!currentMeta) return;
+        const targets = currentMeta.targets || {};
+        const startTime = performance.now();
+        const duration = 800;
+        const startStates = {};
         Object.keys(faceMeshes).forEach(name=>{
           const m = faceMeshes[name];
-          const from = startStates[name];
-          let to;
-          if(!unfolded) {
-            to = targets[name] || from; // if no target, keep original
-          } else {
-            const orig = currentMeta.origFaces.find(f=>f.name===name);
-            to = orig ? {pos: orig.pos, rot: orig.rot} : from;
-          }
-          // lerp position
-          m.position.x = THREE.MathUtils.lerp(from.pos.x, to.pos[0], eased);
-          m.position.y = THREE.MathUtils.lerp(from.pos.y, to.pos[1], eased);
-          m.position.z = THREE.MathUtils.lerp(from.pos.z, to.pos[2], eased);
-          // lerp rotation (euler)
-          m.rotation.x = THREE.MathUtils.lerp(from.rot.x, to.rot[0], eased);
-          m.rotation.y = THREE.MathUtils.lerp(from.rot.y, to.rot[1], eased);
-          m.rotation.z = THREE.MathUtils.lerp(from.rot.z, to.rot[2], eased);
+          startStates[name] = { pos: m.position.clone(), rot: new THREE.Euler().copy(m.rotation) };
         });
-        if(tt < 1) requestAnimationFrame(animate);
-        else unfolded = !unfolded;
-      };
-      requestAnimationFrame(animate);
-    }
-    document.getElementById('toggle-unfold').addEventListener('click', ()=>{
-      // if currentMeta undefined (e.g., shape switched), rebuild meta
-      if(!currentMeta || currentMeta.shape !== currentShape) {
-        currentMeta = buildShape(currentShape);
+        const animate = ()=>{
+          const now = performance.now();
+          const tt = Math.min(1, (now - startTime)/duration);
+          const eased = tt<0.5 ? 2*tt*tt : -1 + (4-2*tt)*tt;
+          Object.keys(faceMeshes).forEach(name=>{
+            const m = faceMeshes[name];
+            const from = startStates[name];
+            let to;
+            if(!unfolded) {
+              to = targets[name] || { pos: [from.pos.x, from.pos.y, from.pos.z], rot: [from.rot.x, from.rot.y, from.rot.z] };
+            } else {
+              const orig = currentMeta.origFaces.find(f=>f.name===name);
+              to = orig ? {pos: orig.pos, rot: orig.rot} : { pos: [from.pos.x, from.pos.y, from.pos.z], rot: [from.rot.x, from.rot.y, from.rot.z] };
+            }
+            // lerp position
+            m.position.x = THREE.MathUtils.lerp(from.pos.x, to.pos[0], eased);
+            m.position.y = THREE.MathUtils.lerp(from.pos.y, to.pos[1], eased);
+            m.position.z = THREE.MathUtils.lerp(from.pos.z, to.pos[2], eased);
+            // lerp rotation (euler)
+            m.rotation.x = THREE.MathUtils.lerp(from.rot.x, to.rot[0], eased);
+            m.rotation.y = THREE.MathUtils.lerp(from.rot.y, to.rot[1], eased);
+            m.rotation.z = THREE.MathUtils.lerp(from.rot.z, to.rot[2], eased);
+          });
+          if(tt < 1) requestAnimationFrame(animate);
+          else unfolded = !unfolded;
+        };
+        requestAnimationFrame(animate);
       }
-      toggleUnfold();
-    });
-
-    // reset
-    document.getElementById('reset').addEventListener('click', ()=>{
-      // rebuild current shape
-      currentMeta = buildShape(currentShape);
-      shapeGroup.position.set(0,0,0);
-      shapeGroup.scale.set(1,1,1);
-      // restore default colors if present
-      Object.keys(faceMeshes).forEach(name=>{
-        if(defaultColors[name]) faceMeshes[name].material.color.set(defaultColors[name]);
+      document.getElementById('toggle-unfold').addEventListener('click', ()=>{
+        // if currentMeta undefined (e.g., shape switched), rebuild meta
+        if(!currentMeta || currentMeta.shape !== currentShape) {
+          currentMeta = buildShape(currentShape);
+        }
+        toggleUnfold();
       });
-      unfolded = false;
-    });
 
-    // window resize
-    function onWindowResize(){
-      camera.aspect = container.clientWidth / container.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
-    }
-    window.addEventListener('resize', onWindowResize);
+      // reset
+      document.getElementById('reset').addEventListener('click', ()=>{
+        // rebuild current shape
+        currentMeta = buildShape(currentShape);
+        shapeGroup.position.set(0,0,0);
+        shapeGroup.scale.set(1,1,1);
+        // restore default colors if present
+        Object.keys(faceMeshes).forEach(name=>{
+          if(defaultColors[name]) faceMeshes[name].material.color.set(defaultColors[name]);
+        });
+        unfolded = false;
+      });
 
-    // animation loop
-    function render(){
-      requestAnimationFrame(render);
-      controls.update();
-      renderer.render(scene, camera);
-    }
-    render();
+      // window resize
+      function onWindowResize(){
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+      }
+      window.addEventListener('resize', onWindowResize);
 
-    // keep currentMeta updated when building shape
-    const originalBuildShape = buildShape;
-    buildShape = function(name){
-      const meta = originalBuildShape(name);
-      currentMeta = meta;
-      currentMeta.shape = name;
-      return meta;
-    };
+      // animation loop
+      function render(){
+        requestAnimationFrame(render);
+        controls.update();
+        renderer.render(scene, camera);
+      }
+      render();
 
-    // initial fill
-    buildShape('cube');
+      // keep currentMeta updated when building shape
+      const originalBuildShape = buildShape;
+      buildShape = function(name){
+        const meta = originalBuildShape(name);
+        currentMeta = meta;
+        currentMeta.shape = name;
+        return meta;
+      };
 
-  })();
+      // initial fill
+      buildShape('cube');
+
+    })();
   </script>
 </body>
 </html>
