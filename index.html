@@ -43,12 +43,12 @@
     <p class="help">操作: マウスで回転・ズーム・パン。面をクリックして選択、またはドロップダウンで選んで色を変えます。</p>
   </div>
 
-  <!-- ES Module 版 three と OrbitControls を直接 import -->
+  <!-- 必ず type="module" にして、bare specifier ('three') ではなく ES module の URL を指定 -->
   <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.155.0/build/three.module.js';
     import { OrbitControls } from 'https://unpkg.com/three@0.155.0/examples/jsm/controls/OrbitControls.js';
 
-    // ここからは元のスクリプトロジックをモジュール向けに使えるように最小限調整
+    // 基本シーンセットアップ（元のスクリプトをモジュール向けに最小限修正）
     const container = document.getElementById('canvas-container');
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x222222);
@@ -58,14 +58,14 @@
     const renderer = new THREE.WebGLRenderer({ antialias:true });
     renderer.setPixelRatio(window.devicePixelRatio || 1);
     renderer.setSize(container.clientWidth, container.clientHeight);
-    // 短期対処: r150+ のライト警告を抑えるためレガシー照明を有効にする
+    // 短期的な警告対処: r150+ のライト変更による警告を抑える（将来的にはライト設定を新APIへ移行してください）
     renderer.useLegacyLights = true;
     container.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    // 照明（従来通り）
+    // 照明
     const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.95);
     hemi.position.set(0, 4, 0);
     scene.add(hemi);
@@ -73,7 +73,7 @@
     dir.position.set(5, 10, 7.5);
     scene.add(dir);
 
-    // --- 以下はあなたの既存ロジックをほぼそのまま流用できます ---
+    // 最小限の立方体構築（元の完全版ロジックをそのまま入れればOK）
     let shapeGroup = new THREE.Group(); scene.add(shapeGroup);
     const ray = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
@@ -121,19 +121,9 @@
         new THREE.LineBasicMaterial({color:0x222222})
       );
       shapeGroup.add(edges);
-      const targets = {
-        front: {pos:[0,0,half], rot:[0,0,0]},
-        right: {pos:[size + size/2,0,0], rot:[-Math.PI/2,0,0]},
-        left:  {pos:[-size - size/2,0,0], rot:[Math.PI/2,0,0]},
-        top:   {pos:[0, size + size/2,0], rot:[0,0,0]},
-        bottom:{pos:[0,-size - size/2,0], rot:[Math.PI,0,0]},
-        back:  {pos:[size*2 + size/2,0,0], rot:[-Math.PI/2,0,0]}
-      };
-      return {origFaces:faces, targets};
+      return {origFaces:faces, targets:{}};
     }
 
-    // （省略）三角柱・四角錐など他の build 関数は元のまま流用可能です。
-    // ここでは最小限で動作確認できるように立方体だけを用意します。
     function populateFaceSelect(){
       faceSelectElem.innerHTML = '';
       Object.keys(faceMeshes).forEach(k=>{
@@ -170,32 +160,27 @@
       shapeGroup.scale.set(s,s,s);
     });
 
-    // simple buildShape wrapper
     let currentMeta = null;
     function buildShape(name){
       currentShape = name;
       if(name === 'cube') currentMeta = buildCube();
-      // 他の形は必要ならここに追加
       populateFaceSelect();
       unfolded = false;
       return currentMeta;
     }
-
     buildShape('cube');
 
-    function onWindowResize(){
+    window.addEventListener('resize', ()=>{
       camera.aspect = container.clientWidth / container.clientHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(container.clientWidth, container.clientHeight);
-    }
-    window.addEventListener('resize', onWindowResize);
+    });
 
-    function animate(){
+    (function animate(){
       requestAnimationFrame(animate);
       controls.update();
       renderer.render(scene, camera);
-    }
-    animate();
+    })();
 
   </script>
 </body>
