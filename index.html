@@ -2,21 +2,29 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>図形プロトタイプ（修正版：ES Modules）</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>図形プロトタイプ（Babylon.js）</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body { margin: 0; font-family: sans-serif; display:flex; height:100vh; }
-    #canvas-container { flex:1; background:#222; }
-    #ui { width:340px; padding:16px; background:#f7f7f7; box-shadow: -2px 0 6px rgba(0,0,0,0.15); overflow:auto; }
-    label { display:block; margin-top:12px; font-size:14px; }
-    select, input[type="color"], input[type="range"], button { width:100%; margin-top:6px; padding:6px; box-sizing:border-box; }
-    p.help { font-size:13px; color:#333; margin-top:12px; }
+    :root{--ui-w:360px}
+    html,body{height:100%;margin:0}
+    body{display:flex;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN","メイリオ",sans-serif;height:100vh;overflow:hidden}
+    #canvas-container{flex:1;background:#222;position:relative}
+    #ui{width:var(--ui-w);padding:16px;background:#f7f7f7;box-shadow:-2px 0 6px rgba(0,0,0,0.12);overflow:auto}
+    label{display:block;margin-top:12px;font-size:14px}
+    select,input[type="color"],input[type="range"],button{width:100%;margin-top:6px;padding:8px;box-sizing:border-box}
+    .help{font-size:13px;color:#333;margin-top:12px}
+    button{cursor:pointer}
+    #color-strip{height:8px;background:#fff;margin-top:6px;border:1px solid #ccc}
   </style>
 </head>
 <body>
-  <div id="canvas-container"></div>
+  <div id="canvas-container">
+    <canvas id="renderCanvas" touch-action="none" style="width:100%;height:100%;display:block"></canvas>
+  </div>
+
   <div id="ui">
-    <h3>図形教材プロトタイプ（修正版）</h3>
+    <h3>図形教材プロトタイプ（Babylon.js）</h3>
+
     <label>図形を選ぶ:
       <select id="shape-select">
         <option value="cube">立方体 (Cube)</option>
@@ -24,164 +32,441 @@
         <option value="squarePyramid">四角錐 (Square Pyramid)</option>
       </select>
     </label>
+
     <label>選択フェース:
       <select id="face-select"></select>
     </label>
+
     <label>色を選ぶ:
       <input type="color" id="color-picker" value="#ff0000">
+      <div id="color-strip"></div>
     </label>
     <button id="apply-color">色を適用</button>
+
     <label>全体スケール:
       <input type="range" id="scale" min="0.3" max="2.5" step="0.01" value="1">
     </label>
+
     <label>展開図アニメーション:
       <button id="toggle-unfold">展開 / 折りたたみ</button>
     </label>
+
     <label>リセット:
       <button id="reset">初期化</button>
     </label>
-    <p class="help">操作: マウスで回転・ズーム・パン。面をクリックして選択、またはドロップダウンで選んで色を変えます。</p>
+
+    <p class="help">操作: マウス（ドラッグで回転、ホイールでズーム、右ドラッグでパン）。面をクリックして選択、または上のドロップダウンで面を選び色を変えます。</p>
   </div>
 
-  <!-- 必ず type="module" にして、bare specifier ('three') ではなく ES module の URL を指定 -->
-  <script type="module">
-    import * as THREE from 'https://unpkg.com/three@0.155.0/build/three.module.js';
-    import { OrbitControls } from 'https://unpkg.com/three@0.155.0/examples/jsm/controls/OrbitControls.js';
+  <!-- Babylon.js CDN -->
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
 
-    // 基本シーンセットアップ（元のスクリプトをモジュール向けに最小限修正）
-    const container = document.getElementById('canvas-container');
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x222222);
-    const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 100);
-    camera.position.set(3, 2, 3);
+  <script>
+  (function(){
 
-    const renderer = new THREE.WebGLRenderer({ antialias:true });
-    renderer.setPixelRatio(window.devicePixelRatio || 1);
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    // 短期的な警告対処: r150+ のライト変更による警告を抑える（将来的にはライト設定を新APIへ移行してください）
-    renderer.useLegacyLights = true;
-    container.appendChild(renderer.domElement);
+    // -- シーン初期化 --
+    const canvas = document.getElementById('renderCanvas');
+    const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+    const scene = new BABYLON.Scene(engine);
+    scene.clearColor = new BABYLON.Color4(0.135,0.135,0.135,1);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
+    const camera = new BABYLON.ArcRotateCamera('cam', Math.PI/4, Math.PI/4, 4, BABYLON.Vector3.Zero(), scene);
+    camera.attachControl(canvas, true);
+    camera.wheelPrecision = 50;
 
-    // 照明
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.95);
-    hemi.position.set(0, 4, 0);
-    scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
-    dir.position.set(5, 10, 7.5);
-    scene.add(dir);
+    const hemi = new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0,1,0), scene);
+    hemi.intensity = 0.95;
+    const dir = new BABYLON.DirectionalLight('dir', new BABYLON.Vector3(-0.5,-1,0.5), scene);
+    dir.position = new BABYLON.Vector3(5,10,5);
+    dir.intensity = 0.6;
 
-    // 最小限の立方体構築（元の完全版ロジックをそのまま入れればOK）
-    let shapeGroup = new THREE.Group(); scene.add(shapeGroup);
-    const ray = new THREE.Raycaster();
-    const pointer = new THREE.Vector2();
-    let faceMeshes = {}, defaultColors = {}, unfolded = false, currentShape = 'cube';
-    const faceSelectElem = document.getElementById('face-select');
+    // root node for current shape
+    let root = new BABYLON.TransformNode('root', scene);
+
+    // 状態と UI 要素
+    let faceMeshes = {}; // { name: mesh }
+    let defaultColors = {};
+    let unfolded = false;
+    let currentShape = 'cube';
+    let currentMeta = null; // { origFaces, targets }
+
     const shapeSelect = document.getElementById('shape-select');
+    const faceSelect = document.getElementById('face-select');
     const colorPicker = document.getElementById('color-picker');
+    const colorStrip = document.getElementById('color-strip');
+    const applyColorBtn = document.getElementById('apply-color');
+    const scaleInput = document.getElementById('scale');
+    const toggleUnfoldBtn = document.getElementById('toggle-unfold');
+    const resetBtn = document.getElementById('reset');
 
-    function clearGroup(g){
-      while(g.children.length){
-        const c = g.children[0];
-        if(c.geometry) c.geometry.dispose();
-        if(c.material && c.material.dispose) c.material.dispose();
-        g.remove(c);
+    // utility lerp
+    function lerp(a,b,t){ return a + (b-a)*t; }
+    function lerpVec3(a,b,t){ return new BABYLON.Vector3(lerp(a.x,b.x,t), lerp(a.y,b.y,t), lerp(a.z,b.z,t)); }
+
+    // dispose helper
+    function clearRoot(){
+      for (const k in faceMeshes){
+        try{ faceMeshes[k].dispose(true); }catch(e){}
       }
+      faceMeshes = {};
+      if(root) { root.getChildren().forEach(c=>c.dispose()); }
+      root.dispose();
+      root = new BABYLON.TransformNode('root', scene);
     }
 
+    // create plane helper (size = width,height) in local plane (centered) facing +Z
+    function createFacePlane(name, width=1, height=1, options = {}){
+      const plane = BABYLON.MeshBuilder.CreatePlane(name, {width: width, height: height, sideOrientation: BABYLON.Mesh.DOUBLESIDE}, scene);
+      plane.parent = root;
+      plane.isPickable = true;
+      plane.receiveShadows = false;
+      return plane;
+    }
+
+    // --- build Cube ---
     function buildCube(){
-      clearGroup(shapeGroup);
+      clearRoot();
       faceMeshes = {};
       defaultColors = {
         front:'#ffffff', back:'#eeeeee', left:'#ddddff', right:'#ddffdd', top:'#ffffcc', bottom:'#ffdddd'
       };
-      const size = 1, half = size/2;
+      const size = 1;
+      const half = size/2;
+
       const faces = [
-        {name:'front', pos:[0,0,half], rot:[0,0,0]},
-        {name:'back',  pos:[0,0,-half], rot:[0,Math.PI,0]},
-        {name:'left',  pos:[-half,0,0], rot:[0,-Math.PI/2,0]},
-        {name:'right', pos:[half,0,0], rot:[0,Math.PI/2,0]},
-        {name:'top',   pos:[0,half,0], rot:[-Math.PI/2,0,0]},
-        {name:'bottom',pos:[0,-half,0], rot:[Math.PI/2,0,0]}
+        {name:'front', pos:new BABYLON.Vector3(0,0,half), rot:new BABYLON.Vector3(0,0,0)},
+        {name:'back',  pos:new BABYLON.Vector3(0,0,-half), rot:new BABYLON.Vector3(0,Math.PI,0)},
+        {name:'left',  pos:new BABYLON.Vector3(-half,0,0), rot:new BABYLON.Vector3(0,-Math.PI/2,0)},
+        {name:'right', pos:new BABYLON.Vector3(half,0,0), rot:new BABYLON.Vector3(0,Math.PI/2,0)},
+        {name:'top',   pos:new BABYLON.Vector3(0,half,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)},
+        {name:'bottom',pos:new BABYLON.Vector3(0,-half,0), rot:new BABYLON.Vector3(Math.PI/2,0,0)}
       ];
+
       faces.forEach(f=>{
-        const geom = new THREE.PlaneGeometry(size, size);
-        const mat = new THREE.MeshStandardMaterial({ color: defaultColors[f.name], side:THREE.DoubleSide });
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.name = f.name;
-        mesh.position.set(...f.pos);
-        mesh.rotation.set(...f.rot);
-        shapeGroup.add(mesh);
-        faceMeshes[f.name] = mesh;
+        const m = createFacePlane(f.name, size, size);
+        m.position.copyFrom(f.pos);
+        m.rotation = f.rot.clone();
+        const mat = new BABYLON.StandardMaterial('mat_'+f.name, scene);
+        mat.diffuseColor = BABYLON.Color3.FromHexString(defaultColors[f.name]);
+        m.material = mat;
+        faceMeshes[f.name] = m;
       });
-      const edges = new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(size, size, size)),
-        new THREE.LineBasicMaterial({color:0x222222})
-      );
-      shapeGroup.add(edges);
-      return {origFaces:faces, targets:{}};
+
+      // edges (visual aid) - create box wireframe
+      const box = BABYLON.MeshBuilder.CreateBox('boxEdges', {size: size*1.001}, scene);
+      box.parent = root;
+      const edMat = new BABYLON.StandardMaterial('edmat', scene);
+      edMat.diffuseColor = new BABYLON.Color3(0.13,0.13,0.13);
+      edMat.disableLighting = true;
+      box.material = edMat;
+      box.renderOutline = true;
+      box.outlineColor = new BABYLON.Color3(0.13,0.13,0.13);
+      box.outlineWidth = 0;
+      box.isVisible = false; // hide solid, used only for EdgesRenderer would be better, but keep simple
+
+      // targets (net)
+      const targets = {
+        front: {pos:new BABYLON.Vector3(0,0,half), rot:new BABYLON.Vector3(0,0,0)},
+        right: {pos:new BABYLON.Vector3(size + size/2,0,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)},
+        left:  {pos:new BABYLON.Vector3(-size - size/2,0,0), rot:new BABYLON.Vector3(Math.PI/2,0,0)},
+        top:   {pos:new BABYLON.Vector3(0, size + size/2,0), rot:new BABYLON.Vector3(0,0,0)},
+        bottom:{pos:new BABYLON.Vector3(0,-size - size/2,0), rot:new BABYLON.Vector3(Math.PI,0,0)},
+        back:  {pos:new BABYLON.Vector3(size*2 + size/2,0,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)}
+      };
+
+      const origFaces = faces.map(f=>({name:f.name,pos:f.pos.clone(),rot:f.rot.clone()}));
+      return {origFaces, targets};
     }
 
-    function populateFaceSelect(){
-      faceSelectElem.innerHTML = '';
-      Object.keys(faceMeshes).forEach(k=>{
-        const opt = document.createElement('option');
-        opt.value = k; opt.textContent = k;
-        faceSelectElem.appendChild(opt);
-      });
-    }
+    // --- build Triangular Prism ---
+    function buildTriPrism(){
+      clearRoot();
+      faceMeshes = {};
+      const s = 1;
+      const depth = 1;
+      const triH = Math.sqrt(3)/2 * s;
+      const v0 = new BABYLON.Vector3(-s/2, -triH/3, 0);
+      const v1 = new BABYLON.Vector3(s/2, -triH/3, 0);
+      const v2 = new BABYLON.Vector3(0, triH*2/3, 0);
 
-    function onPointerDown(event){
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((event.clientX - rect.left)/rect.width)*2 - 1;
-      pointer.y = -((event.clientY - rect.top)/rect.height)*2 + 1;
-      ray.setFromCamera(pointer, camera);
-      const intersects = ray.intersectObjects(Object.values(faceMeshes));
-      if(intersects.length>0){
-        const name = intersects[0].object.name;
-        faceSelectElem.value = name;
+      defaultColors = { capFront:'#ffeeee', capBack:'#eeffee', side0:'#ffdd88', side1:'#88ddff', side2:'#88ff88' };
+
+      // caps
+      function createTriFace(name, z){
+        // create a triangle mesh (Buffer)
+        const positions = [
+          v0.x, v0.y, z,
+          v1.x, v1.y, z,
+          v2.x, v2.y, z
+        ];
+        const indices = [0,1,2];
+        const custom = new BABYLON.Mesh(name, scene);
+        const vertexData = new BABYLON.VertexData();
+        vertexData.positions = positions;
+        vertexData.indices = indices;
+        vertexData.applyToMesh(custom, true);
+        custom.parent = root;
+        custom.isPickable = true;
+        const mat = new BABYLON.StandardMaterial('mat_'+name, scene);
+        mat.diffuseColor = BABYLON.Color3.FromHexString(defaultColors[name]);
+        custom.material = mat;
+        faceMeshes[name] = custom;
+        return custom;
       }
+
+      createTriFace('capFront', depth/2);
+      createTriFace('capBack', -depth/2);
+
+      // side rectangles (as planes)
+      const sides = [
+        {name:'side0', a:v0, b:v1},
+        {name:'side1', a:v1, b:v2},
+        {name:'side2', a:v2, b:v0}
+      ];
+      sides.forEach((sdat,i)=>{
+        const a = sdat.a, b = sdat.b;
+        const edgeCenter = a.add(b).scale(0.5);
+        const edgeLen = BABYLON.Vector3.Distance(a,b);
+        const pl = createFacePlane(sdat.name, edgeLen, depth);
+        // plane default in XY facing +Z; rotate so its 'height' maps to Z thickness
+        const angle = Math.atan2(b.y - a.y, b.x - a.x);
+        pl.position = new BABYLON.Vector3(edgeCenter.x, edgeCenter.y, 0);
+        pl.rotation.x = Math.PI/2;
+        pl.rotation.z = angle;
+        const mat = new BABYLON.StandardMaterial('mat_'+sdat.name, scene);
+        mat.diffuseColor = BABYLON.Color3.FromHexString(defaultColors[sdat.name]);
+        pl.material = mat;
+        faceMeshes[sdat.name] = pl;
+      });
+
+      // prepare orig faces list & targets (approx)
+      const faces = Object.keys(faceMeshes).map(name=>{
+        const m = faceMeshes[name];
+        return {name, pos:m.position.clone(), rot:m.rotation.clone()};
+      });
+
+      const offset = 1.4;
+      const targets = {
+        capFront: {pos:new BABYLON.Vector3(0, triH + offset, 0), rot:new BABYLON.Vector3(0,0,0)},
+        capBack:  {pos:new BABYLON.Vector3(0, -triH - offset, 0), rot:new BABYLON.Vector3(0,0,Math.PI)},
+        side0:    {pos:new BABYLON.Vector3(-1.2,0,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)},
+        side1:    {pos:new BABYLON.Vector3(0,0,-1.6), rot:new BABYLON.Vector3(-Math.PI/2,0,0)},
+        side2:    {pos:new BABYLON.Vector3(1.2,0,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)}
+      };
+
+      return {origFaces:faces, targets};
     }
-    renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
-    document.getElementById('apply-color').addEventListener('click', ()=>{
-      const name = faceSelectElem.value;
-      if(name && faceMeshes[name]) faceMeshes[name].material.color.set(colorPicker.value);
-    });
+    // --- build Square Pyramid ---
+    function buildSquarePyramid(){
+      clearRoot();
+      faceMeshes = {};
+      const base = 1;
+      const half = base/2;
+      const height = 1;
 
-    shapeSelect.addEventListener('change', (e)=>{
-      buildShape(e.target.value);
-    });
+      defaultColors = { base:'#ffeedd', side0:'#ffd', side1:'#ddf', side2:'#dfd', side3:'#ffddee' };
 
-    document.getElementById('scale').addEventListener('input', (e)=>{
-      const s = parseFloat(e.target.value);
-      shapeGroup.scale.set(s,s,s);
-    });
+      // base (plane on XZ)
+      const basePlane = createFacePlane('base', base, base);
+      basePlane.rotation.x = -Math.PI/2;
+      basePlane.position = new BABYLON.Vector3(0,0,0);
+      basePlane.material = new BABYLON.StandardMaterial('mat_base', scene);
+      basePlane.material.diffuseColor = BABYLON.Color3.FromHexString(defaultColors.base);
+      faceMeshes['base'] = basePlane;
 
-    let currentMeta = null;
+      const apex = new BABYLON.Vector3(0, height, 0);
+      const corners = [
+        new BABYLON.Vector3(-half,0,-half),
+        new BABYLON.Vector3( half,0,-half),
+        new BABYLON.Vector3( half,0, half),
+        new BABYLON.Vector3(-half,0, half)
+      ];
+
+      for(let i=0;i<4;i++){
+        const a = corners[i], b = corners[(i+1)%4];
+        const positions = [
+          a.x, a.y, a.z,
+          b.x, b.y, b.z,
+          apex.x, apex.y, apex.z
+        ];
+        const geom = new BABYLON.Mesh('side'+i, scene);
+        const vdata = new BABYLON.VertexData();
+        vdata.positions = positions;
+        vdata.indices = [0,1,2];
+        vdata.applyToMesh(geom, true);
+        geom.parent = root;
+        geom.isPickable = true;
+        const mat = new BABYLON.StandardMaterial('mat_side'+i, scene);
+        mat.diffuseColor = BABYLON.Color3.FromHexString(defaultColors['side'+i]);
+        geom.material = mat;
+        faceMeshes['side'+i] = geom;
+      }
+
+      const faces = Object.keys(faceMeshes).map(name=>{
+        const m = faceMeshes[name];
+        return {name, pos:m.position.clone(), rot:m.rotation.clone()};
+      });
+
+      const gap = 1.05;
+      const targets = {
+        base: {pos:new BABYLON.Vector3(0,0,0), rot:new BABYLON.Vector3(-Math.PI/2,0,0)},
+        side0: {pos:new BABYLON.Vector3(-base - gap, 0, 0), rot:new BABYLON.Vector3(0,0, -Math.PI/2)},
+        side1: {pos:new BABYLON.Vector3(0, 0, -base - gap), rot:new BABYLON.Vector3(0,0, 0)},
+        side2: {pos:new BABYLON.Vector3(base + gap, 0, 0), rot:new BABYLON.Vector3(0,0, Math.PI/2)},
+        side3: {pos:new BABYLON.Vector3(0, 0, base + gap), rot:new BABYLON.Vector3(0,0, Math.PI)}
+      };
+
+      return {origFaces:faces, targets};
+    }
+
+    // build dispatcher
     function buildShape(name){
       currentShape = name;
       if(name === 'cube') currentMeta = buildCube();
+      else if(name === 'triPrism') currentMeta = buildTriPrism();
+      else if(name === 'squarePyramid') currentMeta = buildSquarePyramid();
       populateFaceSelect();
       unfolded = false;
       return currentMeta;
     }
-    buildShape('cube');
 
-    window.addEventListener('resize', ()=>{
-      camera.aspect = container.clientWidth / container.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
+    // populate face select UI
+    function populateFaceSelect(){
+      faceSelect.innerHTML = '';
+      Object.keys(faceMeshes).forEach(k=>{
+        const opt = document.createElement('option');
+        opt.value = k; opt.textContent = k;
+        faceSelect.appendChild(opt);
+      });
+      faceSelect.value = faceSelect.options.length ? faceSelect.options[0].value : '';
+    }
+
+    // picking (pointer)
+    canvas.addEventListener('pointerdown', function(evt){
+      // left click only
+      if(evt.button !== 0) return;
+      const pick = scene.pick(scene.pointerX, scene.pointerY);
+      if(pick && pick.hit && pick.pickedMesh){
+        const name = pick.pickedMesh.name;
+        if(name in faceMeshes){
+          faceSelect.value = name;
+        }
+      }
     });
 
-    (function animate(){
-      requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    })();
+    // apply color
+    function applyColorToSelected(){
+      const name = faceSelect.value;
+      if(!name) return;
+      const mesh = faceMeshes[name];
+      if(!mesh) return;
+      const hex = colorPicker.value;
+      if(mesh.material && mesh.material.diffuseColor){
+        mesh.material.diffuseColor = BABYLON.Color3.FromHexString(hex);
+        colorStrip.style.background = hex;
+      }
+    }
+    applyColorBtn.addEventListener('click', applyColorToSelected);
+    colorPicker.addEventListener('input', ()=> colorStrip.style.background = colorPicker.value);
 
+    // scale
+    scaleInput.addEventListener('input', ()=>{
+      const s = parseFloat(scaleInput.value);
+      root.scaling = new BABYLON.Vector3(s,s,s);
+    });
+
+    // reset
+    resetBtn.addEventListener('click', ()=>{
+      buildShape(currentShape);
+      root.position = BABYLON.Vector3.Zero();
+      root.scaling = new BABYLON.Vector3(1,1,1);
+      // restore default colors
+      Object.keys(faceMeshes).forEach(name=>{
+        if(defaultColors[name] && faceMeshes[name] && faceMeshes[name].material){
+          faceMeshes[name].material.diffuseColor = BABYLON.Color3.FromHexString(defaultColors[name]);
+        }
+      });
+      unfolded = false;
+    });
+
+    // store animation state
+    let animRunning = false;
+    function toggleUnfold(){
+      if(!currentMeta) return;
+      if(animRunning) return;
+      const targets = currentMeta.targets || {};
+      const startStates = {};
+      Object.keys(faceMeshes).forEach(name=>{
+        const m = faceMeshes[name];
+        startStates[name] = {
+          pos: m.position.clone(),
+          rot: m.rotation.clone()
+        };
+      });
+
+      const duration = 600; // ms
+      const startTime = performance.now();
+      animRunning = true;
+
+      function tick(){
+        const now = performance.now();
+        const t = Math.min(1, (now - startTime) / duration);
+        const eased = t < 0.5 ? 2*t*t : -1 + (4-2*t)*t;
+
+        Object.keys(faceMeshes).forEach(name=>{
+          const m = faceMeshes[name];
+          const from = startStates[name];
+          let to;
+          if(!unfolded){
+            to = targets[name] || { pos: from.pos, rot: from.rot };
+          } else {
+            const orig = (currentMeta.origFaces || []).find(f => f.name === name);
+            to = orig ? { pos: orig.pos, rot: orig.rot } : { pos: from.pos, rot: from.rot };
+          }
+          // interpolate position
+          const p = lerpVec3(from.pos, to.pos, eased);
+          m.position.copyFrom(p);
+          // interpolate rotation (component-wise euler lerp)
+          m.rotation = new BABYLON.Vector3(
+            lerp(from.rot.x, to.rot.x, eased),
+            lerp(from.rot.y, to.rot.y, eased),
+            lerp(from.rot.z, to.rot.z, eased)
+          );
+        });
+
+        if(t < 1) requestAnimationFrame(tick);
+        else { unfolded = !unfolded; animRunning = false; }
+      }
+      requestAnimationFrame(tick);
+    }
+
+    toggleUnfoldBtn.addEventListener('click', toggleUnfold);
+
+    // shape select handler
+    shapeSelect.addEventListener('change', (e)=>{
+      buildShape(e.target.value);
+    });
+
+    // initial build
+    buildShape('cube');
+
+    // render loop
+    engine.runRenderLoop(() => {
+      scene.render();
+    });
+
+    window.addEventListener('resize', ()=> engine.resize());
+
+    // provide a small debug tool: when new shapes are built, show available faces in console
+    function logFaces(){
+      console.log('faces:', Object.keys(faceMeshes));
+    }
+    // expose for debugging
+    window.__proto__._faceMeshes = faceMeshes;
+    logFaces();
+
+  })();
   </script>
 </body>
 </html>
